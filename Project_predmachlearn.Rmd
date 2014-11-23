@@ -1,0 +1,109 @@
+---
+title: "Practical Machine Learning Course Project"
+author: '##'
+date: "November 22, 2014"
+output: html_document
+---
+
+## Summary
+
+The aim of this project is to predict which excersise was performed by one of 6 participants. Each of them is monitoring and quantifying their movements using 4 devices (accelerometers on the belt, forearm, arm, and dumbell).
+We will be using data available at <http://groupware.les.inf.puc-rio.br/har>
+
+Each participant was asked to perform barbell lifts correctly and incorrectly in 5 different ways (variable __classe__ = {'A', 'B', 'C', 'D', 'E'}). Let's try to guess what they did!
+
+## Data analysis
+
+We read the data for training and testing respectively downloaded from <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv> and <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv> on 2014/11/22.
+
+
+```{r, library_loading, results='hide', warning=FALSE, message=F}
+# loading libraries
+library(caret)
+library(randomForest)
+# use 2-core of my CPU.
+library(doMC) # install.packages('doMC')
+registerDoMC(2) #adjust to your number of cores.
+```
+
+```{r, loading_data}
+rm(list=ls())
+df.pml.testing <- read.csv('pml-testing.csv', stringsAsFactors = T)
+df.pml.training <- read.csv('pml-training.csv', stringsAsFactors = T)
+```
+
+
+We check the datasets dimensions and summaries.
+```{r, first_exploration,echo=TRUE, eval=TRUE, results='hide'}
+dim(df.pml.training); dim(df.pml.testing)
+
+# Quick check of datasets
+summary(df.pml.training)
+summary(df.pml.testing)
+# the *df.pml.testing* datasets has some columns containing **ONLY** *NA*.
+# Those are therefore of no value for predictions so let's remove those from each dataset
+
+# Testing if every row of a column are a NA, if it is not the case, we keep the column.
+variable.to.keep <- colSums(is.na(df.pml.testing)) != nrow(df.pml.testing)
+names(df.pml.testing)[!variable.to.keep] # → 100 columns to remove
+
+# Remove unusable columns (160 => 60 usable columns)
+df.pml.training.reduced <- df.pml.training[,variable.to.keep]
+df.pml.testing.reduced <- df.pml.testing[,variable.to.keep]
+
+dim(df.pml.testing.reduced)[2]
+
+# Check if any NA still present
+sum(is.na(df.pml.training.reduced)); sum(is.na(df.pml.testing.reduced))
+# No more NA present
+
+# Adjusting time variable format
+df.pml.training.reduced$cvtd_timestamp <- strptime(df.pml.training$cvtd_timestamp, "%d/%m/%Y %H:%M")
+df.pml.testing.reduced$cvtd_timestamp <- strptime(df.pml.testing$cvtd_timestamp, "%d/%m/%Y %H:%M")
+
+# Adjusting factor so that df.pml.training.reduced and df.pml.testing.reduced have the same.
+levels(df.pml.testing.reduced$new_window) <- c("no", "yes")
+```
+
+## Data modeling
+```{r, data_split}
+# Below is not needed for randomForest as it makes its own cross-validation test,
+# But I wanted to make a test on my own validation.
+# Random sampling
+set.seed(975)
+inTrain = createDataPartition(df.pml.training.reduced$classe, p = 3/4)[[1]]
+training = df.pml.training.reduced[ inTrain,]
+testing = df.pml.training.reduced[-inTrain,]
+```
+
+```{r, randomForest, eval=TRUE, cache=TRUE}
+# For my model I decided to remove only the following variables 'X'.
+modFit <- randomForest(y = factor(training$classe), x = training[, -c(1,60)])
+# variable importance plot
+varImpPlot(modFit)
+
+# I tried to remove the 'user_name' or all time related variable but it was only detrimental to the quality of the model (→ raising the out of sample error rate).
+# In our very particular case "predict the manner in which the 6 participants did their exercise",
+# things like keeping the name of each participant is quite valuable. 
+# Indeed, one participant might have a particular tendency/habit that might appear each time and help our classification.
+# Should we try producing a model that would predict the manner in which *someone* is doing its exercise then our variable selection would be very different.
+```
+
+
+We now check the out of sample error rate and error rates found by model constructor. 
+```{r, error_rate}
+# out of sample error rate
+table(predict(modFit, newdata = testing[, -c(1,60)], type="response") == testing[,60])
+table(predict(modFit, newdata = testing[, -c(1,60)], type="response"), testing[,60])
+## → We have a 0% out of sample error rate
+
+# Estimate of error rate found by model construction 
+modFit
+## → 0.11%
+```
+
+
+Below is our guess for the **df.pml.testing** dataset
+```{r, predict}
+predict(modFit, newdata = df.pml.testing.reduced[, -c(1,60)], type="response")
+```
